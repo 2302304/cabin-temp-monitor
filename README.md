@@ -95,7 +95,7 @@ docker run -d \
   postgres:16-alpine
 
 # Aja migraatiot ja seed
-npm run db:push
+npm run db:migrate:deploy
 npm run db:seed
 
 # Käynnistä dev-server
@@ -279,24 +279,287 @@ npm test
 
 ## 🚢 Deployment
 
-### Railway
+Projekti on tuotantovalmis ja tukee useita deployment-alustoja. Käytämme **Prisma Migrate** -järjestelmää, joka ajaa migraatiot automaattisesti deploymentissa.
 
-1. Luo uusi PostgreSQL-tietokanta Railway:ssa
-2. Lisää backend-palvelu
-3. Aseta environment variables:
-   - `DATABASE_URL` (Railway antaa automaattisesti)
-   - `CORS_ORIGIN` (frontend URL)
-4. Deploy frontend Verceliin tai Railway:hin
+### Option 1: Railway (Suositeltu - Backend + Database)
 
-### Vercel (Frontend)
+Railway tarjoaa helpon tavan deployata sekä backend että PostgreSQL-tietokanta.
+
+#### 1. Luo PostgreSQL-tietokanta
 
 ```bash
+# Railway CLI:llä (valinnainen)
+railway init
+railway add postgresql
+```
+
+Tai Railway dashboardissa: **New Project** → **Provision PostgreSQL**
+
+#### 2. Deploy Backend
+
+**A. GitHub-integraatiolla (suositeltu):**
+
+1. Yhdistä GitHub-repo Railway:hin
+2. Valitse `backend` hakemisto root pathiksi
+3. Railway tunnistaa Dockerfilen automaattisesti
+4. Aseta environment variables (ks. alla)
+
+**B. Railway CLI:llä:**
+
+```bash
+cd backend
+railway up
+```
+
+#### 3. Environment Variables (Railway Backend)
+
+Railway asettaa `DATABASE_URL` automaattisesti. Lisää vain:
+
+```bash
+# Railway dashboardissa tai CLI:llä
+PORT=3001
+NODE_ENV=production
+CORS_ORIGIN=https://your-frontend.vercel.app
+ALERT_TEMP_HIGH=26
+ALERT_TEMP_LOW=15
+ALERT_OFFLINE_MINUTES=30
+```
+
+**HUOM:** Railway antaa automaattisesti `DATABASE_URL`:n kun linkität PostgreSQL-palvelun.
+
+#### 4. Migraatiot ja Seed-data
+
+Migraatiot ajetaan **automaattisesti** Dockerfile CMD:ssä:
+```dockerfile
+CMD ["sh", "-c", "npx prisma migrate deploy && npm start"]
+```
+
+Seed-datan voi ajaa Railway Shellissä:
+```bash
+# Railway dashboardissa: Shell-välilehti
+cd /app
+npm run db:seed
+```
+
+#### 5. Healthcheck
+
+Railway:ssa voit asettaa healthcheck URL:ksi:
+```
+https://your-backend.up.railway.app/health
+```
+
+---
+
+### Option 2: Vercel (Frontend)
+
+Vercel on optimoitu React-sovelluksille ja tarjoaa nopean CDN:n.
+
+#### 1. Deploy Vercel CLI:llä
+
+```bash
+# Asenna Vercel CLI
+npm install -g vercel
+
+# Deploy frontend
 cd frontend
 vercel --prod
 ```
 
-Aseta environment variable:
-- `VITE_API_URL` → Backend URL
+#### 2. GitHub-integraatiolla (Suositeltu)
+
+1. Yhdistä repo Verceliin: https://vercel.com/new
+2. **Root Directory**: `frontend`
+3. **Framework Preset**: Vite
+4. **Build Command**: `npm run build`
+5. **Output Directory**: `dist`
+
+#### 3. Environment Variables (Vercel)
+
+Vercelin dashboardissa aseta:
+
+```bash
+VITE_API_URL=https://your-backend.up.railway.app/api
+```
+
+**HUOM:** Muista `/api` polku lopussa!
+
+#### 4. Domain Setup
+
+Vercel antaa automaattisesti domainiin:
+```
+https://cabin-temp-monitor.vercel.app
+```
+
+Voit lisätä custom domainin Vercel dashboardissa.
+
+---
+
+### Option 3: Render.com (Backend + Frontend)
+
+Render on hyvä vaihtoehto ilmaiselle hosting:lle.
+
+#### Backend (Web Service)
+
+1. **New Web Service** → Yhdistä GitHub repo
+2. **Root Directory**: `backend`
+3. **Environment**: Docker
+4. **Instance Type**: Free tai Starter
+
+**Environment Variables:**
+```bash
+DATABASE_URL=<Render PostgreSQL URL>
+PORT=3001
+NODE_ENV=production
+CORS_ORIGIN=https://your-frontend.onrender.com
+```
+
+#### PostgreSQL
+
+1. **New PostgreSQL** instance Renderissä
+2. Kopioi Internal Database URL
+3. Liitä se backend-palvelun `DATABASE_URL`:iin
+
+#### Frontend (Static Site)
+
+1. **New Static Site** → GitHub repo
+2. **Root Directory**: `frontend`
+3. **Build Command**: `npm run build`
+4. **Publish Directory**: `dist`
+
+**Environment Variables:**
+```bash
+VITE_API_URL=https://your-backend.onrender.com/api
+```
+
+---
+
+### Option 4: Docker-pohjainen deployment (VPS/Cloud)
+
+Jos käytät omaa serveriä (DigitalOcean, AWS, Azure, etc.):
+
+#### 1. Server Setup
+
+```bash
+# Asenna Docker & Docker Compose
+curl -fsSL https://get.docker.com -o get-docker.sh
+sh get-docker.sh
+
+# Kloonaa repo
+git clone https://github.com/2302304/cabin-temp-monitor.git
+cd cabin-temp-monitor
+```
+
+#### 2. Production Environment Variables
+
+Luo `.env` tiedostot:
+
+**backend/.env:**
+```bash
+DATABASE_URL=postgresql://postgres:password@postgres:5432/cabin_temp
+PORT=3001
+NODE_ENV=production
+CORS_ORIGIN=https://yourdomain.com
+ALERT_TEMP_HIGH=26
+ALERT_TEMP_LOW=15
+ALERT_OFFLINE_MINUTES=30
+```
+
+**frontend/.env:**
+```bash
+VITE_API_URL=https://api.yourdomain.com/api
+```
+
+#### 3. Deploy with Docker Compose
+
+```bash
+# Build ja käynnistä
+docker-compose up -d --build
+
+# Aja seed-data
+docker exec cabin-temp-backend npm run db:seed
+
+# Tarkista lokit
+docker-compose logs -f
+```
+
+#### 4. Reverse Proxy (Nginx)
+
+```nginx
+# /etc/nginx/sites-available/cabin-temp-monitor
+server {
+    listen 80;
+    server_name yourdomain.com;
+
+    location / {
+        proxy_pass http://localhost:3000;
+        proxy_set_header Host $host;
+    }
+}
+
+server {
+    listen 80;
+    server_name api.yourdomain.com;
+
+    location / {
+        proxy_pass http://localhost:3001;
+        proxy_set_header Host $host;
+    }
+}
+```
+
+#### 5. SSL with Let's Encrypt
+
+```bash
+sudo apt install certbot python3-certbot-nginx
+sudo certbot --nginx -d yourdomain.com -d api.yourdomain.com
+```
+
+---
+
+### Deployment Checklist ✅
+
+Ennen tuotantoon viemistä, varmista:
+
+- [ ] `DATABASE_URL` asetettu ja tietokanta saavutettavissa
+- [ ] `CORS_ORIGIN` asetettu oikeaan frontend URL:iin
+- [ ] `VITE_API_URL` frontendissä osoittaa backend API:in
+- [ ] Migraatiot ajettu (`prisma migrate deploy`)
+- [ ] Seed-data ajettu halutessa (`npm run db:seed`)
+- [ ] Health endpoint vastaa: `/health`
+- [ ] Tietokannalla on persistent storage
+- [ ] Environment variables eivät näy GitHubissa (.env gitignoressa)
+- [ ] SSL-sertifikaatit asennettu (HTTPS)
+
+---
+
+### Post-Deployment
+
+#### Testaa API
+
+```bash
+# Health check
+curl https://your-backend.up.railway.app/health
+
+# Hae laitteet
+curl https://your-backend.up.railway.app/api/devices
+
+# Hae viimeisimmät mittaukset
+curl https://your-backend.up.railway.app/api/readings/latest
+```
+
+#### Tietokannan hallinta
+
+```bash
+# Railway Shell tai SSH
+npm run db:studio  # Avaa Prisma Studio
+npm run db:migrate:status  # Tarkista migraatiot
+```
+
+#### Monitoring
+
+- Railway: Built-in metrics ja lokit
+- Vercel: Analytics ja Web Vitals
+- Render: Logs ja metrics dashboardissa
 
 ## 🐛 Debugging
 
