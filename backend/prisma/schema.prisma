@@ -1,0 +1,73 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Laite/sensori (voi olla seed-data tai oikea IoT-laite)
+model Device {
+  id          String   @id @default(uuid())
+  name        String
+  location    String   // esim. "Olohuone", "Sauna", "Ulko"
+  deviceType  String   // "SEED" tai "IOT" myöhemmin
+  isActive    Boolean  @default(true)
+  lastSeen    DateTime @default(now())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  readings    Reading[]
+  alerts      Alert[]
+  
+  @@index([isActive])
+}
+
+// Yksittäinen lämpötilamittaus
+model Reading {
+  id          String   @id @default(uuid())
+  deviceId    String
+  temperature Float
+  humidity    Float?   // Voi laajentaa myöhemmin
+  timestamp   DateTime @default(now())
+  quality     String   @default("GOOD") // GOOD, WARNING, ERROR
+  
+  device      Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  
+  @@index([deviceId, timestamp(sort: Desc)])
+  @@index([timestamp])
+}
+
+// Hälytykset
+model Alert {
+  id          String   @id @default(uuid())
+  deviceId    String
+  alertType   String   // TEMP_HIGH, TEMP_LOW, OFFLINE, ANOMALY
+  severity    String   // INFO, WARNING, CRITICAL
+  message     String
+  value       Float?   // Lämpötila tai muu arvo
+  threshold   Float?   // Raja-arvo
+  isResolved  Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  resolvedAt  DateTime?
+  
+  device      Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  
+  @@index([deviceId, isResolved])
+  @@index([createdAt(sort: Desc)])
+}
+
+// Tilastot päiväkohtaisesti (optimoi kyselyitä)
+model DailyStats {
+  id          String   @id @default(uuid())
+  deviceId    String
+  date        DateTime @db.Date
+  minTemp     Float
+  maxTemp     Float
+  avgTemp     Float
+  readingCount Int
+  
+  @@unique([deviceId, date])
+  @@index([date])
+}
